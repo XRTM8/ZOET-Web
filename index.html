@@ -17,6 +17,11 @@
   <script>
     // ZOET Web API Interceptor & Gateway Router
     (function() {
+      // For web, if no backend is set and source is unset or 'all', default to cinemana so content loads natively:
+      if (!localStorage.getItem('zoet_backend_url') && (!localStorage.getItem('zoet_source') || localStorage.getItem('zoet_source') === 'all')) {
+        localStorage.setItem('zoet_source', 'cinemana');
+      }
+
       const urlParams = new URLSearchParams(window.location.search);
       const qApi = urlParams.get('api');
       if (qApi) {
@@ -26,15 +31,53 @@
       const originalFetch = window.fetch;
       window.fetch = function(resource, init) {
         let url = typeof resource === 'string' ? resource : (resource && resource.url ? resource.url : '');
+        const backend = localStorage.getItem('zoet_backend_url') || window.ZOET_BACKEND_URL || '';
+
         if (url.startsWith('/api/')) {
-          const backend = localStorage.getItem('zoet_backend_url') || window.ZOET_BACKEND_URL || '';
           if (backend) {
-            const cleanBackend = backend.replace(/\/+$/, '');
-            url = cleanBackend + url;
+            // Route through custom backend / Cloudflare Worker
+            url = backend.replace(/\/+$/, '') + url;
             if (typeof resource === 'string') {
               resource = url;
             } else {
               resource = new Request(url, init || resource);
+            }
+          } else if (url.startsWith('/api/cinemana')) {
+            // Direct Cinemana Gateway: Cinemana natively returns Access-Control-Allow-Origin: *
+            try {
+              const parsed = new URL(url, window.location.href);
+              const pathParam = parsed.searchParams.get('path');
+              if (pathParam) {
+                url = 'https://cinemana.shabakaty.com/api/android/' + pathParam;
+              }
+            } catch(e) {}
+            if (typeof resource === 'string') {
+              resource = url;
+            } else {
+              resource = new Request(url, init || resource);
+            }
+          } else {
+            // Krmzi / other calls without backend: return empty array responses so UI displays Cinemana cleanly
+            if (url.startsWith('/api/home')) {
+              return Promise.resolve(new Response(JSON.stringify({
+                series: { series: [], hasNext: false, page: 1 },
+                episodes: { episodes: [], hasNext: false, page: 1 }
+              }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' }
+              }));
+            }
+            if (url.startsWith('/api/series') || url.startsWith('/api/episodes') || url.startsWith('/api/search')) {
+              return Promise.resolve(new Response(JSON.stringify({
+                series: [],
+                episodes: [],
+                results: [],
+                hasNext: false,
+                page: 1
+              }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' }
+              }));
             }
           }
         }
