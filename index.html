@@ -13,74 +13,174 @@
   <link rel="preload" href="fonts/tajawal-5.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="fonts/tajawal.css">
   <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
-  <link rel="stylesheet" href="styles.css?v=2.8.0">
+  <link rel="stylesheet" href="styles.css?v=2.8.1">
   <script>
     // ZOET Web API Interceptor & Gateway Router
     (function() {
-      // For web, if no backend is set and source is unset or 'all', default to cinemana so content loads natively:
-      if (!localStorage.getItem('zoet_backend_url') && (!localStorage.getItem('zoet_source') || localStorage.getItem('zoet_source') === 'all')) {
-        localStorage.setItem('zoet_source', 'cinemana');
-      }
-
+      // 1. Check URL query param ?api=... to dynamically configure backend
       const urlParams = new URLSearchParams(window.location.search);
       const qApi = urlParams.get('api');
       if (qApi) {
         localStorage.setItem('zoet_backend_url', qApi.replace(/\/+$/, ''));
       }
-      
+
+      // 2. Default source on web: if no backend is set and source is unset or 'all', default to cinemana
+      if (!localStorage.getItem('zoet_backend_url')) {
+        const curSource = localStorage.getItem('zoet_source');
+        if (!curSource || curSource === 'all') {
+          localStorage.setItem('zoet_source', 'cinemana');
+          localStorage.setItem('otium_source', 'cinemana');
+        }
+      }
+
       const originalFetch = window.fetch;
       window.fetch = function(resource, init) {
-        let url = typeof resource === 'string' ? resource : (resource && resource.url ? resource.url : '');
-        const backend = localStorage.getItem('zoet_backend_url') || window.ZOET_BACKEND_URL || '';
+        let rawUrl = '';
+        let reqMethod = 'GET';
+        let reqHeaders = {};
+        let reqSignal = null;
 
-        if (url.startsWith('/api/')) {
-          if (backend) {
-            // Route through custom backend / Cloudflare Worker
-            url = backend.replace(/\/+$/, '') + url;
-            if (typeof resource === 'string') {
-              resource = url;
-            } else {
-              resource = new Request(url, init || resource);
-            }
-          } else if (url.startsWith('/api/cinemana')) {
-            // Direct Cinemana Gateway: Cinemana natively returns Access-Control-Allow-Origin: *
-            try {
-              const parsed = new URL(url, window.location.href);
-              const pathParam = parsed.searchParams.get('path');
-              if (pathParam) {
-                url = 'https://cinemana.shabakaty.com/api/android/' + pathParam;
+        if (typeof resource === 'string') {
+          rawUrl = resource;
+          if (init) {
+            reqMethod = init.method || 'GET';
+            reqSignal = init.signal || null;
+            if (init.headers) {
+              if (init.headers instanceof Headers) {
+                init.headers.forEach((v, k) => { reqHeaders[k] = v; });
+              } else if (Array.isArray(init.headers)) {
+                init.headers.forEach(([k, v]) => { reqHeaders[k] = v; });
+              } else {
+                reqHeaders = Object.assign({}, init.headers);
               }
-            } catch(e) {}
-            if (typeof resource === 'string') {
-              resource = url;
+            }
+          }
+        } else if (resource && typeof resource === 'object') {
+          rawUrl = resource.url || '';
+          reqMethod = (init && init.method) || resource.method || 'GET';
+          reqSignal = (init && init.signal) || resource.signal || null;
+          if (init && init.headers) {
+            if (init.headers instanceof Headers) {
+              init.headers.forEach((v, k) => { reqHeaders[k] = v; });
+            } else if (Array.isArray(init.headers)) {
+              init.headers.forEach(([k, v]) => { reqHeaders[k] = v; });
             } else {
-              resource = new Request(url, init || resource);
+              reqHeaders = Object.assign({}, init.headers);
             }
-          } else {
-            // Krmzi / other calls without backend: return empty array responses so UI displays Cinemana cleanly
-            if (url.startsWith('/api/home')) {
-              return Promise.resolve(new Response(JSON.stringify({
-                series: { series: [], hasNext: false, page: 1 },
-                episodes: { episodes: [], hasNext: false, page: 1 }
-              }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' }
-              }));
-            }
-            if (url.startsWith('/api/series') || url.startsWith('/api/episodes') || url.startsWith('/api/search')) {
-              return Promise.resolve(new Response(JSON.stringify({
-                series: [],
-                episodes: [],
-                results: [],
-                hasNext: false,
-                page: 1
-              }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' }
-              }));
+          } else if (resource.headers) {
+            try {
+              resource.headers.forEach((v, k) => { reqHeaders[k] = v; });
+            } catch(e) {
+              reqHeaders = Object.assign({}, resource.headers);
             }
           }
         }
+
+        // Parse URL
+        let parsed;
+        try {
+          parsed = new URL(rawUrl, window.location.href);
+        } catch(e) {
+          return originalFetch.call(this, resource, init);
+        }
+
+        // Only intercept requests targeting our local origin or relative paths with /api/
+        const isSameOrigin = (parsed.origin === window.location.origin);
+        const hasApiPath = parsed.pathname.includes('/api/');
+
+        if (!hasApiPath || (!isSameOrigin && !rawUrl.startsWith('/api/'))) {
+          return originalFetch.call(this, resource, init);
+        }
+
+        const backend = localStorage.getItem('zoet_backend_url') || window.ZOET_BACKEND_URL || '';
+        const apiIdx = parsed.pathname.indexOf('/api/');
+        const apiSubpath = parsed.pathname.substring(apiIdx + 5); // e.g. "cinemana", "cinemana/subtitle", "series", "home"
+
+        // Case A: Custom Backend (Cloudflare Worker or local backend server)
+        if (backend) {
+          const targetUrl = backend.replace(/\/+$/, '') + '/api/' + apiSubpath + parsed.search;
+          const forwardOptions = {
+            method: reqMethod,
+            headers: reqHeaders,
+            signal: reqSignal
+          };
+          if (init && init.body) forwardOptions.body = init.body;
+          return originalFetch.call(this, targetUrl, forwardOptions);
+        }
+
+        // Case B: Direct Cinemana API (native CORS supported)
+        if (apiSubpath.startsWith('cinemana')) {
+          // B.1 Subtitle file
+          if (apiSubpath.startsWith('cinemana/subtitle')) {
+            const subUrl = parsed.searchParams.get('url');
+            if (subUrl) {
+              return originalFetch.call(this, subUrl, {
+                method: 'GET',
+                signal: reqSignal
+              });
+            }
+          }
+
+          // B.2 Cinemana API: ?path=...
+          const pathParam = parsed.searchParams.get('path');
+          if (pathParam) {
+            const cleanPath = pathParam.replace(/^\/+/, '');
+            const targetUrl = 'https://cinemana.shabakaty.com/api/android/' + cleanPath;
+            const headers = Object.assign({}, reqHeaders, {
+              'Accept': 'application/json'
+            });
+
+            return originalFetch.call(this, targetUrl, {
+              method: 'GET',
+              headers: headers,
+              signal: reqSignal
+            }).catch(function(err) {
+              console.error('[ZOET Cinemana Direct Fetch Error]:', targetUrl, err);
+              throw err;
+            });
+          }
+        }
+
+        // Case C: Krmzi / Home / Series / Episodes / Search without custom backend
+        // Return valid empty JSON response with 200 OK so UI renders Cinemana cleanly
+        if (apiSubpath.startsWith('home')) {
+          return Promise.resolve(new Response(JSON.stringify({
+            series: { series: [], hasNext: false, page: 1 },
+            episodes: { episodes: [], hasNext: false, page: 1 },
+            status: true,
+            isSuccess: true
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json; charset=utf-8' }
+          }));
+        }
+
+        if (apiSubpath.startsWith('series') || apiSubpath.startsWith('episodes') || apiSubpath.startsWith('search')) {
+          return Promise.resolve(new Response(JSON.stringify({
+            series: [],
+            episodes: [],
+            results: [],
+            hasNext: false,
+            page: 1,
+            status: true,
+            isSuccess: true
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json; charset=utf-8' }
+          }));
+        }
+
+        if (apiSubpath.startsWith('series/detail') || apiSubpath.startsWith('episode/detail')) {
+          return Promise.resolve(new Response(JSON.stringify({
+            status: false,
+            error: 'يتطلب قرمزي خادم اتصال (Backend URL)',
+            isSuccess: false
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json; charset=utf-8' }
+          }));
+        }
+
         return originalFetch.call(this, resource, init);
       };
     })();
@@ -400,6 +500,24 @@
     } catch (e) {
       serverStatusMsg.style.color = '#f44336';
       serverStatusMsg.textContent = '❌ فشل الاتصال بالخادم. تأكد من الرابط وإعدادات CORS.';
+    }
+  });
+
+  // Source selection helper toast for Krmzi when no backend is set
+  function showToast(msg) {
+    const t = document.getElementById('appToast');
+    if (t) {
+      t.textContent = msg;
+      t.classList.remove('hidden');
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => t.classList.add('hidden'), 4500);
+    }
+  }
+
+  document.addEventListener('click', (e) => {
+    const krmziBtn = e.target.closest('[data-source="krmzi"], [data-desk-source="krmzi"]');
+    if (krmziBtn && !localStorage.getItem('zoet_backend_url')) {
+      showToast('⚠️ مصدر قرمزي يتطلب ضبط خادم اتصال (Cloudflare Worker أو خادم محلي) لتجاوز حظر CORS. يمكنك ضبطه من قائمة "الخادم". سينمانا متاح دائماً بدون خادم.');
     }
   });
 </script>
