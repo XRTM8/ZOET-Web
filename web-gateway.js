@@ -6,13 +6,13 @@
     localStorage.setItem('zoet_backend_url', qApi.replace(/\/+$/, ''));
   }
 
-  // On static web hosting without a custom backend, default unset/'all' to cinemana for instant playback
-  if (!localStorage.getItem('zoet_backend_url')) {
-    const curSource = localStorage.getItem('zoet_source');
-    if (!curSource || curSource === 'all') {
-      localStorage.setItem('zoet_source', 'cinemana');
-      localStorage.setItem('otium_source', 'cinemana');
+  // Always keep 'all' as the default source view; reset previous auto-forced cinemana once
+  if (!localStorage.getItem('zoet_web_source_v2')) {
+    if (!localStorage.getItem('zoet_backend_url') && localStorage.getItem('zoet_source') === 'cinemana') {
+      localStorage.setItem('zoet_source', 'all');
+      localStorage.setItem('otium_source', 'all');
     }
+    localStorage.setItem('zoet_web_source_v2', '1');
   }
 
   const originalFetch = window.fetch;

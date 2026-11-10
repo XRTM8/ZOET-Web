@@ -12,8 +12,8 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="preload" href="fonts/tajawal-5.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="fonts/tajawal.css">
-  <link rel="stylesheet" href="styles.css?v=2.9.0">
-  <script src="web-gateway.js"></script>
+  <link rel="stylesheet" href="styles.css?v=2.9.1">
+  <script src="web-gateway.js?v=2.9.1"></script>
 </head>
 <body>
 <div class="app-frame" id="appFrame">
@@ -467,6 +467,10 @@
     function initInfiniteScroll() {
       const checkAndTrigger = (btn) => {
         if (!btn || btn.disabled || btn.classList.contains('hidden')) return;
+        if (btn.id === 'loadMoreSeriesBtn') {
+          const sec = document.getElementById('seriesSection');
+          if (!sec || sec.classList.contains('hidden')) return;
+        }
         const txt = (btn.textContent || '').trim();
         if (!txt || txt.includes('إعادة') || txt.includes('المحاولة') || txt.includes('جاري')) return;
         btn.click();
@@ -552,8 +556,8 @@
 </script>
 <script src="vendor/hls/hls.min.js" defer></script>
 <script type="module">
-import init from './wasm/otium_ui.js';
-init().catch(() => { document.getElementById('bootStatus').textContent = 'تعذّر تشغيل التطبيق. أعد فتحه أو تحديث المتصفح.'; });
+import init from './wasm/otium_ui.js?v=2.9.1';
+init({ module_or_path: './wasm/otium_ui_bg.wasm?v=2.9.1' }).catch(() => { document.getElementById('bootStatus').textContent = 'تعذّر تشغيل التطبيق. أعد فتحه أو تحديث المتصفح.'; });
 </script>
 </body>
 </html>
