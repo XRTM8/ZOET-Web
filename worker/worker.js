@@ -56,7 +56,28 @@ export default {
       });
     }
 
-    // Cinemana API proxy
+    // Cinemana API & subtitle proxy
+    if (path.startsWith('/api/cinemana/subtitle')) {
+      const targetUrl = url.searchParams.get('url');
+      if (!targetUrl) {
+        return jsonResponse({ error: 'Missing url parameter' }, 400);
+      }
+      try {
+        const resp = await fetch(targetUrl, { headers: { 'User-Agent': USER_AGENT } });
+        const body = await resp.text();
+        return new Response(body, {
+          status: resp.status,
+          headers: {
+            ...CORS_HEADERS,
+            'Content-Type': 'text/vtt; charset=utf-8',
+            'Cache-Control': 'public, max-age=86400',
+          },
+        });
+      } catch (err) {
+        return jsonResponse({ error: 'Subtitle fetch failed: ' + err.message }, 502);
+      }
+    }
+
     if (path.startsWith('/api/cinemana')) {
       const cinemanaPath = url.searchParams.get('path');
       if (!cinemanaPath) {
@@ -87,7 +108,7 @@ export default {
     }
 
     // Media stream proxy (for CORS or Referer-protected streams like OK.ru / VK)
-    if (path.startsWith('/api/proxy')) {
+    if (path.startsWith('/api/proxy') || path.startsWith('/api/media')) {
       const targetUrl = url.searchParams.get('url');
       if (!targetUrl) {
         return jsonResponse({ error: 'Missing url parameter' }, 400);

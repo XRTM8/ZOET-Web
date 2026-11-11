@@ -16,6 +16,105 @@
   }
 
   const originalFetch = window.fetch;
+  const nativeSetAttr = Element.prototype.setAttribute;
+  const trackSrcDesc = typeof HTMLTrackElement !== 'undefined'
+    ? Object.getOwnPropertyDescriptor(HTMLTrackElement.prototype, 'src')
+    : null;
+  const trackBlobMap = new WeakMap();
+
+  function toWebVtt(rawText) {
+    const text = (rawText || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
+    if (!text) return '';
+    if (/^WEBVTT(?:\s|$)/m.test(text.slice(0, 16))) return text;
+    return 'WEBVTT\n\n' + text.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2 --> $3.$4');
+  }
+
+  function hydrateSubtitleTrack(track, rawSrc) {
+    if (!track || !rawSrc) return false;
+    let parsed;
+    try {
+      parsed = new URL(rawSrc, window.location.href);
+    } catch (e) {
+      return false;
+    }
+    const isSameOrigin = parsed.origin === window.location.origin;
+    if (!(isSameOrigin || rawSrc.startsWith('/api/')) || !parsed.pathname.includes('/api/cinemana/subtitle')) {
+      return false;
+    }
+    const subUrl = parsed.searchParams.get('url');
+    if (!subUrl) return true;
+
+    const reqToken = String(Number(track.dataset.zoetSubSeq || '0') + 1);
+    track.dataset.zoetSubSeq = reqToken;
+
+    const backend = localStorage.getItem('zoet_backend_url') || window.ZOET_BACKEND_URL || '';
+    const fetchTarget = backend
+      ? backend.replace(/\/+$/, '') + '/api/cinemana/subtitle' + parsed.search
+      : subUrl;
+
+    originalFetch.call(window, fetchTarget, { method: 'GET' })
+      .then(function(resp) {
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        return resp.text();
+      })
+      .then(function(body) {
+        if (track.dataset.zoetSubSeq !== reqToken) return;
+        const vtt = toWebVtt(body);
+        if (!vtt) return;
+        const prev = trackBlobMap.get(track);
+        if (prev) {
+          try { URL.revokeObjectURL(prev); } catch (_) {}
+        }
+        const blobUrl = URL.createObjectURL(new Blob([vtt], { type: 'text/vtt; charset=utf-8' }));
+        trackBlobMap.set(track, blobUrl);
+        nativeSetAttr.call(track, 'src', blobUrl);
+        if (track.track && track.hasAttribute('default')) {
+          track.track.mode = 'showing';
+        }
+      })
+      .catch(function(err) {
+        if (err && err.name !== 'AbortError') {
+          console.warn('[ZOET Subtitle Fetch]:', subUrl, err);
+        }
+      });
+    return true;
+  }
+
+  Element.prototype.setAttribute = function(name, value) {
+    if (this.tagName === 'TRACK' && String(name).toLowerCase() === 'src' && typeof value === 'string') {
+      if (hydrateSubtitleTrack(this, value)) return;
+    }
+    return nativeSetAttr.call(this, name, value);
+  };
+
+  if (trackSrcDesc && trackSrcDesc.set) {
+    Object.defineProperty(HTMLTrackElement.prototype, 'src', {
+      configurable: true,
+      enumerable: trackSrcDesc.enumerable,
+      get: trackSrcDesc.get,
+      set: function(value) {
+        if (typeof value === 'string' && hydrateSubtitleTrack(this, value)) return;
+        return trackSrcDesc.set.call(this, value);
+      }
+    });
+  }
+
+  if (typeof XMLHttpRequest !== 'undefined' && XMLHttpRequest.prototype.open) {
+    const origXhrOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url) {
+      let target = url;
+      if (typeof url === 'string' && url.startsWith('/api/')) {
+        const backend = localStorage.getItem('zoet_backend_url') || window.ZOET_BACKEND_URL || '';
+        if (backend) {
+          target = backend.replace(/\/+$/, '') + url;
+        }
+      }
+      const args = Array.prototype.slice.call(arguments);
+      args[1] = target;
+      return origXhrOpen.apply(this, args);
+    };
+  }
+
   window.fetch = function(resource, init) {
     let rawUrl = '';
     let reqMethod = 'GET';
@@ -110,7 +209,9 @@
           headers: headers,
           signal: reqSignal
         }).catch(function(err) {
-          console.error('[ZOET Cinemana Direct Fetch Error]:', targetUrl, err);
+          if (!err || err.name !== 'AbortError') {
+            console.error('[ZOET Cinemana Direct Fetch Error]:', targetUrl, err);
+          }
           throw err;
         });
       }
@@ -176,6 +277,22 @@
 
     if (serverRow) {
       serverRow.classList.remove('hidden');
+    }
+    const nativePlayer = document.getElementById('nativePlayer');
+    if (nativePlayer && 'MutationObserver' in window) {
+      new MutationObserver((mutations) => {
+        mutations.forEach((m) => {
+          m.removedNodes.forEach((node) => {
+            if (node && node.tagName === 'TRACK') {
+              const prev = trackBlobMap.get(node);
+              if (prev) {
+                try { URL.revokeObjectURL(prev); } catch (_) {}
+                trackBlobMap.delete(node);
+              }
+            }
+          });
+        });
+      }).observe(nativePlayer, { childList: true });
     }
     if (serverUrlInput) {
       serverUrlInput.value = localStorage.getItem('zoet_backend_url') || '';
