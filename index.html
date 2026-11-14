@@ -12,8 +12,9 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="preload" href="fonts/tajawal-5.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="fonts/tajawal.css">
-  <link rel="stylesheet" href="styles.css?v=3.0.0&amp;rev=3">
-  <script src="web-gateway.js?v=3.0.0&amp;rev=3"></script>
+  <link rel="stylesheet" href="styles.css?v=3.0.0&amp;rev=4">
+  <meta name="zoet-api-origin" content="">
+  <script src="web-gateway.js?v=3.0.0&amp;rev=4"></script>
 </head>
 <body>
 <div class="app-frame" id="appFrame">
@@ -80,15 +81,10 @@
         <span id="seriesCountSub" class="headline-muted"></span>
       </div>
       <div id="continueStrip" class="continue-strip hidden"></div>
-      <section class="offline-card hidden" id="krmziGatewayNotice" aria-labelledby="krmziGatewayTitle">
-        <h3 id="krmziGatewayTitle">ربط قرمزي بخادم ZOET</h3>
-        <p>اربط خادم ZOET على هذا الجهاز أو أدخل رابط خادم ويب من الإعدادات.</p>
-        <div class="settings-server-actions">
-          <button type="button" class="settings-btn primary" id="connectLocalBackend">ربط الخادم المحلي</button>
-          <button type="button" class="settings-btn" id="openGatewaySettings">إعدادات الخادم</button>
-          <a class="settings-btn" href="http://127.0.0.1:3000/">فتح ZOET محلياً</a>
-        </div>
-        <p id="krmziGatewayStatus" role="status"></p>
+      <section class="offline-card hidden" id="krmziWebUnavailable" aria-labelledby="krmziWebTitle">
+        <h3 id="krmziWebTitle">قرمزي غير متاح حالياً داخل ZOET Web</h3>
+        <p>تقدر تشاهد من سينمانا حسب توفّره على شبكتك.</p>
+        <button type="button" class="btn-retry" id="tryCinemanaBtn">عرض سينمانا</button>
       </section>
       <div class="media-grid" id="seriesGrid"></div>
       <div class="catalogue-pagination">
@@ -173,27 +169,6 @@
             </div>
           </div>
 
-          <div class="settings-row settings-server-row hidden" id="webServerSettingsRow">
-            <div class="settings-server-head">
-              <div class="settings-row-info">
-                <span class="settings-row-ico" aria-hidden="true">
-                  <svg class="z-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8M12 3a13.5 13.5 0 0 1 0 18M12 3a13.5 13.5 0 0 0 0 18"/></svg>
-                </span>
-                <div>
-                  <h3>خادم الاتصال للويب</h3>
-                  <p>اختياري: اربط Cloudflare Worker أو خادماً محلياً لتشغيل قرمزي في المتصفح.</p>
-                </div>
-              </div>
-            </div>
-            <div class="settings-server-controls">
-              <input type="url" id="serverUrlInput" class="settings-input" dir="ltr" placeholder="https://zoet-gateway.yourname.workers.dev" aria-label="رابط خادم الاتصال">
-              <div class="settings-server-actions">
-                <button class="settings-btn primary" id="saveServerBtn">حفظ وتطبيق</button>
-                <button class="settings-btn" id="testServerBtn">فحص الاتصال</button>
-              </div>
-              <p id="serverStatusMsg" class="settings-server-status" role="status"></p>
-            </div>
-          </div>
         </div>
 
         <div class="settings-section-label">البيانات والنسخ الاحتياطي</div>

@@ -1,38 +1,72 @@
-/**
- * ZOET Web - Cloudflare Worker CORS & API Gateway v3.0.0
- *
- * This Worker bridges ZOET Web (running on GitHub Pages or locally) with upstream
- * media APIs (Cinemana & Krmzi), bypassing browser CORS restrictions and setting
- * the required headers and proxies.
- *
- * Free deployment:
- * 1. Sign up for free at https://cloudflare.com
- * 2. Workers & Pages -> Create Application -> Create Worker
- * 3. Paste this code and click 'Save and Deploy'
- * 4. Copy your Worker URL (e.g. https://zoet-api.yourname.workers.dev)
- * 5. Paste it into ZOET Web Server Settings or use ?api=https://...
- */
+// Hosted transport for the Rust/WASM frontend on GitHub Pages.
 
 const KRMZI_ORIGIN = 'https://krmzi.org';
-const CINEMANA_BASE = 'https://cinemana.shabakaty.com/api/android/';
 const USER_AGENT = 'Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
 
 const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, HEAD',
-  'Access-Control-Allow-Headers': '*',
+  'Access-Control-Allow-Origin': 'https://xrtm8.github.io',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Range',
   'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges, Content-Type',
   'Access-Control-Max-Age': '86400',
 };
 
-function jsonResponse(data, status = 200) {
+function jsonResponse(data, status = 200, maxAge = 0) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       ...CORS_HEADERS,
       'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': maxAge ? `public, max-age=${maxAge}` : 'no-store',
     },
   });
+}
+
+const krmziHost = host => /^(?:www\.)?krmzi\.(?:org|net|tv)$/.test(host);
+const okHost = host => host === 'ok.ru' || host === 'www.ok.ru';
+const mediaHost = host => /(?:^|\.)(?:okcdn\.ru|vkuser\.net)$/.test(host);
+
+function allowedUrl(raw, checkHost) {
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.port && checkHost(url.hostname) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchAllowed(url, checkHost, headers = {}, signal = AbortSignal.timeout(9000)) {
+  for (let attempt = 0; url && attempt < 5; attempt++) {
+    const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT, ...headers }, signal, redirect: 'manual' });
+    if (response.status < 300 || response.status >= 400) return response;
+    await response.body?.cancel();
+    const location = response.headers.get('location');
+    url = location && allowedUrl(new URL(location, url), checkHost);
+  }
+  throw new Error('Unsupported upstream redirect');
+}
+
+async function krmziHtml(raw) {
+  const response = await fetchAllowed(allowedUrl(raw, krmziHost), krmziHost);
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error('Krmzi upstream unavailable');
+  }
+  return response.text();
+}
+
+function proxyPlaylist(body, base, origin) {
+  const proxied = value => {
+    const url = allowedUrl(new URL(value, base), mediaHost);
+    if (!url) throw new Error('Unsupported playlist URL');
+    return `${origin}/api/media?url=${encodeURIComponent(url.href)}`;
+  };
+  return body.split('\n').map(line => {
+    const trimmed = line.trim();
+    return trimmed && !trimmed.startsWith('#')
+      ? proxied(trimmed)
+      : line.replace(/URI="([^"]+)"/g, (_, uri) => `URI="${proxied(uri)}"`);
+  }).join('\n');
 }
 
 function decodeHtml(text) {
@@ -223,12 +257,9 @@ async function fetchOkStreams(id) {
   if (!/^\d+$/.test(cleanId)) return [];
 
   try {
-    const resp = await fetch(`https://ok.ru/videoembed/${cleanId}`, {
-      headers: {
-        'User-Agent': USER_AGENT,
-        'Origin': 'https://ok.ru',
-        'Referer': 'https://ok.ru/',
-      },
+    const resp = await fetchAllowed(new URL(`https://ok.ru/videoembed/${cleanId}`), okHost, {
+      Origin: 'https://ok.ru',
+      Referer: 'https://ok.ru/',
     });
     if (!resp.ok) return [];
     const html = await resp.text();
@@ -246,7 +277,7 @@ async function fetchOkStreams(id) {
     const streams = [];
     const seen = new Set();
 
-    if (metadata.hlsManifestUrl && /^https?:\/\//.test(metadata.hlsManifestUrl)) {
+    if (allowedUrl(metadata.hlsManifestUrl, mediaHost)) {
       streams.push({ quality: 'تلقائي', type: 'hls', url: metadata.hlsManifestUrl });
       seen.add(metadata.hlsManifestUrl);
     }
@@ -375,257 +406,93 @@ async function parseEpisodeDetail(html, url, selectedServer) {
   };
 }
 
+function listingRoute(path, page, query) {
+  const prefix = path === '/api/series' ? '/series-list/' : '/';
+  const target = new URL(prefix + (page > 1 ? `page/${page}/` : ''), KRMZI_ORIGIN);
+  if (query) target.searchParams.set('s', query);
+  return target;
+}
+
+async function listing(path, page, query = '') {
+  const kind = path.slice(5);
+  const key = kind === 'search' ? 'results' : kind;
+  const html = await krmziHtml(listingRoute(path, page, query));
+  const hasNext = hasNextPage(html, page, kind === 'series');
+  return { page, [key]: parseCards(html, kind), hasNext, nextPage: hasNext ? page + 1 : null, isSuccess: true };
+}
+
+async function media(request, url) {
+  const target = allowedUrl(url.searchParams.get('url'), mediaHost);
+  if (!target) return jsonResponse({ error: 'Unsupported media URL' }, 400);
+
+  const referrer = /(?:^|\.)okcdn\.ru$/.test(target.hostname) ? 'https://ok.ru' : 'https://vk.com';
+  const upstreamHeaders = { Origin: referrer, Referer: referrer + '/' };
+  const range = request.headers.get('Range');
+  if (range) upstreamHeaders.Range = range;
+
+  const response = await fetchAllowed(target, mediaHost, upstreamHeaders);
+  const contentType = response.headers.get('Content-Type') || '';
+  if (response.ok && (target.pathname.endsWith('.m3u8') || /mpegurl/i.test(contentType))) {
+    const body = proxyPlaylist(await response.text(), response.url || target, url.origin);
+    return new Response(body, {
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' }
+    });
+  }
+  const headers = new Headers(CORS_HEADERS);
+  for (const name of ['Content-Type', 'Content-Length', 'Content-Range', 'Accept-Ranges']) {
+    const value = response.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  headers.set('Cache-Control', 'no-store');
+  return new Response(response.body, { status: response.status, headers });
+}
+
 export default {
   async fetch(request) {
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
-
+    if (request.method !== 'GET') return jsonResponse({ error: 'Method not allowed' }, 405);
     const url = new URL(request.url);
     const path = url.pathname;
+    const page = Math.max(1, Math.min(1000, parseInt(url.searchParams.get('page'), 10) || 1));
 
-    // 1. Health check
-    if (path === '/api/health' || path === '/health') {
-      return jsonResponse({
-        ok: true,
-        service: 'ZOET Cloudflare Worker Gateway',
-        version: '3.0.0',
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // 2. Cinemana subtitle proxy
-    if (path.startsWith('/api/cinemana/subtitle')) {
-      const targetUrl = url.searchParams.get('url');
-      if (!targetUrl) return jsonResponse({ error: 'Missing url parameter' }, 400);
-      try {
-        const resp = await fetch(targetUrl, { headers: { 'User-Agent': USER_AGENT } });
-        const body = await resp.text();
-        return new Response(body, {
-          status: resp.status,
-          headers: {
-            ...CORS_HEADERS,
-            'Content-Type': 'text/vtt; charset=utf-8',
-            'Cache-Control': 'public, max-age=86400',
-          },
-        });
-      } catch (err) {
-        return jsonResponse({ error: 'Subtitle fetch failed: ' + err.message }, 502);
-      }
-    }
-
-    // 3. Cinemana API proxy
-    if (path.startsWith('/api/cinemana')) {
-      const cinemanaPath = url.searchParams.get('path');
-      if (!cinemanaPath) return jsonResponse({ error: 'Missing path parameter' }, 400);
-      try {
-        const targetUrl = CINEMANA_BASE + cinemanaPath.replace(/^\/+/, '');
-        const resp = await fetch(targetUrl, {
-          headers: { 'User-Agent': USER_AGENT, 'Accept': 'application/json' },
-        });
-        const body = await resp.text();
-        return new Response(body, {
-          status: resp.status,
-          headers: {
-            ...CORS_HEADERS,
-            'Content-Type': 'application/json; charset=utf-8',
-            'Cache-Control': 'public, max-age=120',
-          },
-        });
-      } catch (err) {
-        return jsonResponse({ error: 'Failed to contact Cinemana: ' + err.message }, 502);
-      }
-    }
-
-    // 4. Krmzi Home
-    if (path === '/api/home') {
-      const page = parseInt(url.searchParams.get('page') || '1', 10) || 1;
-      try {
-        const epUrl = page === 1 ? `${KRMZI_ORIGIN}/` : `${KRMZI_ORIGIN}/page/${page}/`;
-        const seriesUrl = page === 1 ? `${KRMZI_ORIGIN}/series-list/` : `${KRMZI_ORIGIN}/series-list/page/${page}/`;
-
-        const [epResp, seriesResp] = await Promise.all([
-          fetch(epUrl, { headers: { 'User-Agent': USER_AGENT } }).then(r => r.text()).catch(() => ''),
-          fetch(seriesUrl, { headers: { 'User-Agent': USER_AGENT } }).then(r => r.text()).catch(() => ''),
-        ]);
-
-        const epCards = parseCards(epResp, 'episodes');
-        const seriesCards = parseCards(seriesResp, 'series');
-
-        return jsonResponse({
-          episodes: {
-            page,
-            episodes: epCards,
-            hasNext: hasNextPage(epResp, page, false),
-            isSuccess: true,
-          },
-          series: {
-            page,
-            series: seriesCards,
-            hasNext: hasNextPage(seriesResp, page, true),
-            isSuccess: true,
-          },
-          isSuccess: true,
-        });
-      } catch (err) {
-        return jsonResponse({ error: 'Failed to load home: ' + err.message, isSuccess: false }, 502);
-      }
-    }
-
-    // 5. Krmzi Series List
-    if (path === '/api/series') {
-      const page = parseInt(url.searchParams.get('page') || '1', 10) || 1;
-      try {
-        const target = page === 1 ? `${KRMZI_ORIGIN}/series-list/` : `${KRMZI_ORIGIN}/series-list/page/${page}/`;
-        const resp = await fetch(target, { headers: { 'User-Agent': USER_AGENT } });
-        const html = await resp.text();
-        const cards = parseCards(html, 'series');
-        const hasNext = hasNextPage(html, page, true);
-
-        return jsonResponse({
-          page,
-          series: cards,
-          hasNext,
-          nextPage: hasNext ? page + 1 : null,
-          isSuccess: true,
-        });
-      } catch (err) {
-        return jsonResponse({ error: 'Failed to load series: ' + err.message, isSuccess: false }, 502);
-      }
-    }
-
-    // 6. Krmzi Episodes List
-    if (path === '/api/episodes') {
-      const page = parseInt(url.searchParams.get('page') || '1', 10) || 1;
-      try {
-        const target = page === 1 ? `${KRMZI_ORIGIN}/` : `${KRMZI_ORIGIN}/page/${page}/`;
-        const resp = await fetch(target, { headers: { 'User-Agent': USER_AGENT } });
-        const html = await resp.text();
-        const cards = parseCards(html, 'episodes');
-        const hasNext = hasNextPage(html, page, false);
-
-        return jsonResponse({
-          page,
-          episodes: cards,
-          hasNext,
-          nextPage: hasNext ? page + 1 : null,
-          isSuccess: true,
-        });
-      } catch (err) {
-        return jsonResponse({ error: 'Failed to load episodes: ' + err.message, isSuccess: false }, 502);
-      }
-    }
-
-    // 7. Krmzi Search
-    if (path === '/api/search') {
-      const page = parseInt(url.searchParams.get('page') || '1', 10) || 1;
-      const q = (url.searchParams.get('q') || '').trim();
-      if (!q) {
-        return jsonResponse({ query: '', page, results: [], hasNext: false, nextPage: null, isSuccess: true });
-      }
-      try {
-        const target = page === 1
-          ? `${KRMZI_ORIGIN}/?s=${encodeURIComponent(q)}`
-          : `${KRMZI_ORIGIN}/page/${page}/?s=${encodeURIComponent(q)}`;
-        const resp = await fetch(target, { headers: { 'User-Agent': USER_AGENT } });
-        const html = await resp.text();
-        const results = parseCards(html, 'search');
-        const hasNext = hasNextPage(html, page, false);
-
-        return jsonResponse({
-          query: q,
-          page,
-          results,
-          hasNext,
-          nextPage: hasNext ? page + 1 : null,
-          isSuccess: true,
-        });
-      } catch (err) {
-        return jsonResponse({ error: 'Search failed: ' + err.message, isSuccess: false }, 502);
-      }
-    }
-
-    // 8. Krmzi Series Detail
-    if (path === '/api/series/detail') {
-      const targetUrl = url.searchParams.get('url');
-      if (!targetUrl) return jsonResponse({ error: 'Missing url parameter' }, 400);
-      try {
-        const resp = await fetch(targetUrl, { headers: { 'User-Agent': USER_AGENT } });
-        const html = await resp.text();
-        const detail = parseSeriesDetail(html, targetUrl);
-        return jsonResponse(detail);
-      } catch (err) {
-        return jsonResponse({ error: 'Failed to load series detail: ' + err.message, isSuccess: false }, 502);
-      }
-    }
-
-    // 9. Krmzi Episode Detail
-    if (path === '/api/episode/detail') {
-      const targetUrl = url.searchParams.get('url');
-      const selectedServer = url.searchParams.get('server') || '';
-      if (!targetUrl) return jsonResponse({ error: 'Missing url parameter' }, 400);
-      try {
-        const resp = await fetch(targetUrl, { headers: { 'User-Agent': USER_AGENT } });
-        const html = await resp.text();
-        const detail = await parseEpisodeDetail(html, targetUrl, selectedServer);
-        return jsonResponse(detail);
-      } catch (err) {
-        return jsonResponse({ error: 'Failed to load episode detail: ' + err.message, isSuccess: false }, 502);
-      }
-    }
-
-    // 10. Media / Proxy streaming
-    if (path.startsWith('/api/proxy') || path.startsWith('/api/media')) {
-      const targetUrl = url.searchParams.get('url');
-      if (!targetUrl) return jsonResponse({ error: 'Missing url parameter' }, 400);
-
-      try {
-        const upstreamHeaders = new Headers();
-        upstreamHeaders.set('User-Agent', USER_AGENT);
-
-        if (targetUrl.includes('ok.ru') || targetUrl.includes('odnoklassniki')) {
-          upstreamHeaders.set('Origin', 'https://ok.ru');
-          upstreamHeaders.set('Referer', 'https://ok.ru/');
-        } else if (targetUrl.includes('vk.com') || targetUrl.includes('vkuser')) {
-          upstreamHeaders.set('Origin', 'https://vk.com');
-          upstreamHeaders.set('Referer', 'https://vk.com/');
+    try {
+      switch (path) {
+        case '/api/health':
+          return jsonResponse({ ok: true, service: 'ZOET Web Gateway' });
+        case '/api/series':
+        case '/api/episodes':
+          return jsonResponse(await listing(path, page), 200, 120);
+        case '/api/home': {
+          const [series, episodes] = await Promise.all([listing('/api/series', page), listing('/api/episodes', page)]);
+          return jsonResponse({ series, episodes, isSuccess: true }, 200, 120);
         }
-
-        const range = request.headers.get('Range');
-        if (range) upstreamHeaders.set('Range', range);
-
-        const resp = await fetch(targetUrl, { headers: upstreamHeaders });
-        const responseHeaders = new Headers(resp.headers);
-        for (const [k, v] of Object.entries(CORS_HEADERS)) {
-          responseHeaders.set(k, v);
+        case '/api/search': {
+          const query = (url.searchParams.get('q') || '').trim().slice(0, 120);
+          if (!query) return jsonResponse({ query, page, results: [], hasNext: false, nextPage: null });
+          return jsonResponse({ query, ...await listing(path, page, query) }, 200, 60);
         }
-
-        return new Response(resp.body, {
-          status: resp.status,
-          statusText: resp.statusText,
-          headers: responseHeaders,
-        });
-      } catch (err) {
-        return jsonResponse({ error: 'Proxy failed: ' + err.message }, 502);
+        case '/api/series/detail':
+        case '/api/episode/detail': {
+          const kind = path.split('/')[2];
+          const target = allowedUrl(url.searchParams.get('url'), krmziHost);
+          if (!target?.pathname.startsWith(`/${kind}/`)) {
+            return jsonResponse({ error: 'Unsupported Krmzi URL' }, 400);
+          }
+          const html = await krmziHtml(target);
+          const detail = kind === 'series'
+            ? parseSeriesDetail(html, target.href)
+            : await parseEpisodeDetail(html, target.href, url.searchParams.get('server') || '');
+          return jsonResponse(detail, 200, kind === 'series' ? 120 : 0);
+        }
+        case '/api/media':
+          return await media(request, url);
+        default:
+          return jsonResponse({ error: 'Unknown route' }, 404);
       }
+    } catch {
+      return jsonResponse({ error: 'Upstream unavailable', isSuccess: false }, 502);
     }
-
-    // Fallback info
-    return jsonResponse({
-      name: 'ZOET API Gateway',
-      status: 'active',
-      version: '3.0.0',
-      endpoints: [
-        '/api/health',
-        '/api/home',
-        '/api/series',
-        '/api/episodes',
-        '/api/search',
-        '/api/series/detail',
-        '/api/episode/detail',
-        '/api/cinemana',
-        '/api/proxy',
-      ],
-    });
-  },
+  }
 };

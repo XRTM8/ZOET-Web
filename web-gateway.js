@@ -1,77 +1,18 @@
-// ZOET Web API Interceptor, Gateway Router & Web Settings Controller
+// Browser routing for the hosted Krmzi API and the direct Cinemana provider.
 (function() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const qApi = urlParams.get('api');
-  if (qApi) {
-    localStorage.setItem('zoet_backend_url', qApi.replace(/\/+$/, ''));
-    const page = new URL(window.location.href);
-    page.searchParams.delete('api');
-    window.history.replaceState(null, '', page);
-  }
-
-  // Always keep 'all' as the default source view; reset previous auto-forced cinemana once
-  if (!localStorage.getItem('zoet_web_source_v2')) {
-    if (!localStorage.getItem('zoet_backend_url') && localStorage.getItem('zoet_source') === 'cinemana') {
-      localStorage.setItem('zoet_source', 'all');
-      localStorage.setItem('otium_source', 'all');
-    }
-    localStorage.setItem('zoet_web_source_v2', '1');
-  }
-
   const originalFetch = window.fetch;
-  const localBackend = 'http://127.0.0.1:3000';
-  const savedBackend = (localStorage.getItem('zoet_backend_url') || window.ZOET_BACKEND_URL || '').replace(/\/+$/, '');
-  const localConnectionHelp = 'شغّل خادم ZOET واسمح لهذا الموقع بالوصول للجهاز المحلي (Loopback network أو Local network) من إعدادات المتصفح، ثم حاول مرة ثانية.';
-  let activeBackend = '';
-
-  function isLoopback(address) {
-    try {
-      const host = new URL(address).hostname;
-      return host === 'localhost' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(host);
-    } catch {
-      return false;
-    }
+  const backend = document.querySelector('meta[name="zoet-api-origin"]')?.content.replace(/\/+$/, '') || '';
+  // Recover visitors who last opened the unavailable source before this release.
+  if (!backend && !localStorage.getItem('zoet_web_source_v4') && (localStorage.getItem('zoet_source') || localStorage.getItem('otium_source')) === 'krmzi') {
+    localStorage.setItem('zoet_source', 'cinemana');
+    localStorage.setItem('otium_source', 'cinemana');
+    localStorage.setItem('zoet_web_source_v4', '1');
   }
-
-  async function loopbackPermission() {
-    try {
-      return (await navigator.permissions.query({ name: 'loopback-network' })).state;
-    } catch {
-      return 'unknown';
-    }
-  }
-
-  async function probeBackend(address, timeout) {
-    const response = await originalFetch.call(window, `${address}/api/health`, {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(timeout)
-    });
-    if (!response.ok || (await response.json()).ok !== true) {
-      throw new Error('Invalid ZOET health response');
-    }
-  }
-
-  const backendReady = (async () => {
-    const address = savedBackend || localBackend;
-    if (!isLoopback(address)) {
-      activeBackend = address;
-      return activeBackend;
-    }
-    const permission = await loopbackPermission();
-    const verified = sessionStorage.getItem('zoet_verified_backend') === address;
-    if (permission !== 'granted' && !(permission === 'unknown' && verified)) return '';
-    try {
-      await probeBackend(address, 2500);
-      activeBackend = address;
-    } catch {
-      // Keep Cinemana on its direct route if the local server is unreachable.
-    }
-    return activeBackend;
-  })();
   const nativeSetAttr = Element.prototype.setAttribute;
   const trackSrcDesc = typeof HTMLTrackElement !== 'undefined'
     ? Object.getOwnPropertyDescriptor(HTMLTrackElement.prototype, 'src')
     : null;
+  const mediaSrcDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
   const trackBlobMap = new WeakMap();
 
   function toWebVtt(rawText) {
@@ -99,8 +40,7 @@
     const reqToken = String(Number(track.dataset.zoetSubSeq || '0') + 1);
     track.dataset.zoetSubSeq = reqToken;
 
-    backendReady.then(backend => originalFetch.call(window,
-      backend ? backend + '/api/cinemana/subtitle' + parsed.search : subUrl))
+    originalFetch.call(window, subUrl)
       .then(function(resp) {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         return resp.text();
@@ -129,11 +69,22 @@
   }
 
   Element.prototype.setAttribute = function(name, value) {
-    if (this.tagName === 'TRACK' && String(name).toLowerCase() === 'src' && typeof value === 'string') {
-      if (hydrateSubtitleTrack(this, value)) return;
+    if (String(name).toLowerCase() === 'src' && typeof value === 'string') {
+      if (this.tagName === 'TRACK' && hydrateSubtitleTrack(this, value)) return;
+      if (backend && this.tagName === 'VIDEO' && value.startsWith('/api/media?')) value = backend + value;
     }
     return nativeSetAttr.call(this, name, value);
   };
+
+  if (backend && mediaSrcDesc?.set) {
+    Object.defineProperty(HTMLMediaElement.prototype, 'src', {
+      ...mediaSrcDesc,
+      set(value) {
+        const target = typeof value === 'string' && value.startsWith('/api/media?') ? backend + value : value;
+        mediaSrcDesc.set.call(this, target);
+      }
+    });
+  }
 
   if (trackSrcDesc && trackSrcDesc.set) {
     Object.defineProperty(HTMLTrackElement.prototype, 'src', {
@@ -151,8 +102,8 @@
     const origXhrOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url) {
       let target = url;
-      if (activeBackend && typeof url === 'string' && url.startsWith('/api/')) {
-        target = activeBackend + url;
+      if (backend && typeof url === 'string' && url.startsWith('/api/')) {
+        target = backend + url;
       }
       const args = Array.prototype.slice.call(arguments);
       args[1] = target;
@@ -160,7 +111,7 @@
     };
   }
 
-  window.fetch = async function(resource, init) {
+  window.fetch = function(resource, init) {
     let rawUrl = '';
     let reqMethod = 'GET';
     const reqHeaders = {};
@@ -215,11 +166,10 @@
       return originalFetch.call(this, resource, init);
     }
 
-    const backend = await backendReady;
     const apiIdx = parsed.pathname.indexOf('/api/');
     const apiSubpath = parsed.pathname.substring(apiIdx + 5);
 
-    if (backend) {
+    if (backend && !apiSubpath.startsWith('cinemana')) {
       const targetUrl = backend + '/api/' + apiSubpath + parsed.search;
       const forwardOptions = {
         method: reqMethod,
@@ -263,24 +213,23 @@
     }
 
     if (/^(home|series|episodes|episode|search)(\/|$)/.test(apiSubpath)) {
-      return new Response(JSON.stringify({ error: 'يتطلب قرمزي خادم اتصال', isSuccess: false }), {
+      return Promise.resolve(new Response(JSON.stringify({ error: 'قرمزي غير متاح حالياً', isSuccess: false }), {
         status: 503,
         headers: { 'Content-Type': 'application/json; charset=utf-8' }
-      });
+      }));
     }
 
     return originalFetch.call(this, resource, init);
   };
 
-  function initWebGatewaySettings() {
-    const serverRow = document.getElementById('webServerSettingsRow');
-    const serverUrlInput = document.getElementById('serverUrlInput');
-    const saveServerBtn = document.getElementById('saveServerBtn');
-    const testServerBtn = document.getElementById('testServerBtn');
-    const serverStatusMsg = document.getElementById('serverStatusMsg');
-
-    if (serverRow) {
-      serverRow.classList.remove('hidden');
+  function initWebGateway() {
+    if (!backend) {
+      const krmzi = document.querySelector('[data-source="krmzi"]');
+      const notice = document.getElementById('krmziWebUnavailable');
+      const updateNotice = () => notice.classList.toggle('hidden', krmzi.getAttribute('aria-pressed') !== 'true');
+      new MutationObserver(updateNotice).observe(krmzi, { attributes: true, attributeFilter: ['aria-pressed'] });
+      document.getElementById('tryCinemanaBtn').addEventListener('click', () => document.querySelector('[data-source="cinemana"]').click());
+      updateNotice();
     }
     const nativePlayer = document.getElementById('nativePlayer');
     if (nativePlayer && 'MutationObserver' in window) {
@@ -298,71 +247,11 @@
         });
       }).observe(nativePlayer, { childList: true });
     }
-    serverUrlInput.value = savedBackend;
-
-    const setStatus = (msg, kind) => {
-      if (!serverStatusMsg) return;
-      serverStatusMsg.textContent = msg;
-      serverStatusMsg.classList.remove('is-ok', 'is-err');
-      if (kind === 'ok') serverStatusMsg.classList.add('is-ok');
-      if (kind === 'err') serverStatusMsg.classList.add('is-err');
-    };
-
-    async function connect(address, button, report, save) {
-      button.disabled = true;
-      report('جاري فحص الاتصال بالخادم…');
-      try {
-        await probeBackend(address, 30000);
-        report('الخادم متصل.', 'ok');
-        if (save) {
-          localStorage.setItem('zoet_backend_url', address);
-          sessionStorage.setItem('zoet_verified_backend', address);
-          window.location.reload();
-        }
-      } catch {
-        report(isLoopback(address) ? localConnectionHelp : 'تعذّر الاتصال بخادم ZOET. تحقّق من الرابط.', 'err');
-      } finally {
-        button.disabled = false;
-      }
-    }
-
-    const readAddress = () => serverUrlInput.value.trim().replace(/\/+$/, '');
-    saveServerBtn.addEventListener('click', () => {
-      const address = readAddress();
-      if (address) {
-        connect(address, saveServerBtn, setStatus, true);
-      } else {
-        localStorage.removeItem('zoet_backend_url');
-        sessionStorage.removeItem('zoet_verified_backend');
-        window.location.reload();
-      }
-    });
-    testServerBtn.addEventListener('click', () => {
-      connect(readAddress() || localBackend, testServerBtn, setStatus, false);
-    });
-
-    const notice = document.getElementById('krmziGatewayNotice');
-    const connectBtn = document.getElementById('connectLocalBackend');
-    const noticeStatus = document.getElementById('krmziGatewayStatus');
-    const krmziBtn = document.querySelector('[data-source="krmzi"]');
-    function updateNotice() {
-      notice.classList.toggle('hidden', Boolean(activeBackend) || krmziBtn.getAttribute('aria-pressed') !== 'true');
-    }
-    new MutationObserver(updateNotice).observe(krmziBtn, { attributes: true, attributeFilter: ['aria-pressed'] });
-    backendReady.then(updateNotice);
-    connectBtn.addEventListener('click', () => {
-      const address = isLoopback(savedBackend) ? savedBackend : localBackend;
-      connect(address, connectBtn, message => { noticeStatus.textContent = message; }, true);
-    });
-    document.getElementById('openGatewaySettings').addEventListener('click', () => {
-      document.getElementById('openSettingsBtn').click();
-      serverUrlInput.focus();
-    });
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initWebGatewaySettings);
+    document.addEventListener('DOMContentLoaded', initWebGateway);
   } else {
-    initWebGatewaySettings();
+    initWebGateway();
   }
 })();
