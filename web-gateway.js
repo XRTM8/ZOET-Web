@@ -365,6 +365,10 @@
           showWebToast('تم الاتصال تلقائياً بخادم ZOET المحلي (127.0.0.1:3000)');
           const serverUrlInput = document.getElementById('serverUrlInput');
           if (serverUrlInput) serverUrlInput.value = 'http://127.0.0.1:3000';
+          const currentSource = localStorage.getItem('zoet_source') || localStorage.getItem('otium_source');
+          if (currentSource === 'krmzi') {
+            setTimeout(() => window.location.reload(), 300);
+          }
         }
       }).catch(() => {
         clearTimeout(timeout);
