@@ -12,8 +12,8 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="preload" href="fonts/tajawal-5.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="fonts/tajawal.css">
-  <link rel="stylesheet" href="styles.css?v=3.0.0">
-  <script src="web-gateway.js?v=3.0.0"></script>
+  <link rel="stylesheet" href="styles.css?v=3.0.0&amp;rev=3">
+  <script src="web-gateway.js?v=3.0.0&amp;rev=3"></script>
 </head>
 <body>
 <div class="app-frame" id="appFrame">
@@ -80,6 +80,16 @@
         <span id="seriesCountSub" class="headline-muted"></span>
       </div>
       <div id="continueStrip" class="continue-strip hidden"></div>
+      <section class="offline-card hidden" id="krmziGatewayNotice" aria-labelledby="krmziGatewayTitle">
+        <h3 id="krmziGatewayTitle">ربط قرمزي بخادم ZOET</h3>
+        <p>اربط خادم ZOET على هذا الجهاز أو أدخل رابط خادم ويب من الإعدادات.</p>
+        <div class="settings-server-actions">
+          <button type="button" class="settings-btn primary" id="connectLocalBackend">ربط الخادم المحلي</button>
+          <button type="button" class="settings-btn" id="openGatewaySettings">إعدادات الخادم</button>
+          <a class="settings-btn" href="http://127.0.0.1:3000/">فتح ZOET محلياً</a>
+        </div>
+        <p id="krmziGatewayStatus" role="status"></p>
+      </section>
       <div class="media-grid" id="seriesGrid"></div>
       <div class="catalogue-pagination">
         <p id="cataloguePageStatus" role="status"></p>
@@ -336,7 +346,7 @@
     <div class="video-stage" id="playerCanvas" tabindex="-1">
       <div class="player-backdrop" id="playerBackdrop" aria-hidden="true"></div>
       <video id="nativePlayer" playsinline webkit-playsinline preload="none" referrerpolicy="no-referrer" class="video-elem hidden"></video>
-      <iframe id="embedPlayer" class="video-elem hidden" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-presentation" referrerpolicy="no-referrer"></iframe>
+      <iframe id="embedPlayer" class="video-elem hidden" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-presentation" referrerpolicy="no-referrer"></iframe>
 
       <button class="touch-unlock-pill hidden" id="unlockTouchBtn" aria-label="إلغاء قفل اللمس">
         <svg class="z-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="10" rx="2.2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>

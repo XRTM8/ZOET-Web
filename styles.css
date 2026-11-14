@@ -87,6 +87,11 @@ img { display: block; max-width: 100%; }
 .spinner-ring { flex: 0 0 auto; width: 22px; height: 22px; border: 2px solid #ffffff25; border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .offline-card { margin: 12px 22px 22px; padding: 20px; border: 1px solid var(--line-subtle); border-radius: 8px; }
+#krmziGatewayNotice { margin-inline: 0; }
+#krmziGatewayStatus:empty { display: none; }
+html:not([data-view='series']) #krmziGatewayNotice,
+html[data-view='series'] #seriesSection:has(#krmziGatewayNotice:not(.hidden)) :is(#seriesGrid, .catalogue-pagination),
+html[data-view='series'] #seriesSection:has(#krmziGatewayNotice:not(.hidden)) + #offlineState { display: none; }
 .offline-card h3 { font-size: 16px; font-weight: 500; }
 .offline-card p { color: var(--text-sub); font-size: 12px; margin: 7px 0 12px; }
 .btn-retry { min-height: 42px; color: var(--accent); font-size: 12px; display: flex; align-items: center; gap: 8px; }

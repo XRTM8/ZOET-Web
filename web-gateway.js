@@ -4,6 +4,9 @@
   const qApi = urlParams.get('api');
   if (qApi) {
     localStorage.setItem('zoet_backend_url', qApi.replace(/\/+$/, ''));
+    const page = new URL(window.location.href);
+    page.searchParams.delete('api');
+    window.history.replaceState(null, '', page);
   }
 
   // Always keep 'all' as the default source view; reset previous auto-forced cinemana once
@@ -16,6 +19,55 @@
   }
 
   const originalFetch = window.fetch;
+  const localBackend = 'http://127.0.0.1:3000';
+  const savedBackend = (localStorage.getItem('zoet_backend_url') || window.ZOET_BACKEND_URL || '').replace(/\/+$/, '');
+  const localConnectionHelp = 'شغّل خادم ZOET واسمح لهذا الموقع بالوصول للجهاز المحلي (Loopback network أو Local network) من إعدادات المتصفح، ثم حاول مرة ثانية.';
+  let activeBackend = '';
+
+  function isLoopback(address) {
+    try {
+      const host = new URL(address).hostname;
+      return host === 'localhost' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(host);
+    } catch {
+      return false;
+    }
+  }
+
+  async function loopbackPermission() {
+    try {
+      return (await navigator.permissions.query({ name: 'loopback-network' })).state;
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  async function probeBackend(address, timeout) {
+    const response = await originalFetch.call(window, `${address}/api/health`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(timeout)
+    });
+    if (!response.ok || (await response.json()).ok !== true) {
+      throw new Error('Invalid ZOET health response');
+    }
+  }
+
+  const backendReady = (async () => {
+    const address = savedBackend || localBackend;
+    if (!isLoopback(address)) {
+      activeBackend = address;
+      return activeBackend;
+    }
+    const permission = await loopbackPermission();
+    const verified = sessionStorage.getItem('zoet_verified_backend') === address;
+    if (permission !== 'granted' && !(permission === 'unknown' && verified)) return '';
+    try {
+      await probeBackend(address, 2500);
+      activeBackend = address;
+    } catch {
+      // Keep Cinemana on its direct route if the local server is unreachable.
+    }
+    return activeBackend;
+  })();
   const nativeSetAttr = Element.prototype.setAttribute;
   const trackSrcDesc = typeof HTMLTrackElement !== 'undefined'
     ? Object.getOwnPropertyDescriptor(HTMLTrackElement.prototype, 'src')
@@ -47,12 +99,8 @@
     const reqToken = String(Number(track.dataset.zoetSubSeq || '0') + 1);
     track.dataset.zoetSubSeq = reqToken;
 
-    const backend = localStorage.getItem('zoet_backend_url') || window.ZOET_BACKEND_URL || '';
-    const fetchTarget = backend
-      ? backend.replace(/\/+$/, '') + '/api/cinemana/subtitle' + parsed.search
-      : subUrl;
-
-    originalFetch.call(window, fetchTarget, { method: 'GET' })
+    backendReady.then(backend => originalFetch.call(window,
+      backend ? backend + '/api/cinemana/subtitle' + parsed.search : subUrl))
       .then(function(resp) {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         return resp.text();
@@ -103,11 +151,8 @@
     const origXhrOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url) {
       let target = url;
-      if (typeof url === 'string' && url.startsWith('/api/')) {
-        const backend = localStorage.getItem('zoet_backend_url') || window.ZOET_BACKEND_URL || '';
-        if (backend) {
-          target = backend.replace(/\/+$/, '') + url;
-        }
+      if (activeBackend && typeof url === 'string' && url.startsWith('/api/')) {
+        target = activeBackend + url;
       }
       const args = Array.prototype.slice.call(arguments);
       args[1] = target;
@@ -115,7 +160,7 @@
     };
   }
 
-  window.fetch = function(resource, init) {
+  window.fetch = async function(resource, init) {
     let rawUrl = '';
     let reqMethod = 'GET';
     const reqHeaders = {};
@@ -170,12 +215,12 @@
       return originalFetch.call(this, resource, init);
     }
 
-    const backend = localStorage.getItem('zoet_backend_url') || window.ZOET_BACKEND_URL || '';
+    const backend = await backendReady;
     const apiIdx = parsed.pathname.indexOf('/api/');
     const apiSubpath = parsed.pathname.substring(apiIdx + 5);
 
     if (backend) {
-      const targetUrl = backend.replace(/\/+$/, '') + '/api/' + apiSubpath + parsed.search;
+      const targetUrl = backend + '/api/' + apiSubpath + parsed.search;
       const forwardOptions = {
         method: reqMethod,
         headers: reqHeaders,
@@ -217,56 +262,15 @@
       }
     }
 
-    if (apiSubpath.startsWith('home')) {
-      return Promise.resolve(new Response(JSON.stringify({
-        series: { series: [], hasNext: false, page: 1 },
-        episodes: { episodes: [], hasNext: false, page: 1 },
-        status: true,
-        isSuccess: true
-      }), {
-        status: 200,
+    if (/^(home|series|episodes|episode|search)(\/|$)/.test(apiSubpath)) {
+      return new Response(JSON.stringify({ error: 'يتطلب قرمزي خادم اتصال', isSuccess: false }), {
+        status: 503,
         headers: { 'Content-Type': 'application/json; charset=utf-8' }
-      }));
-    }
-
-    if (apiSubpath.startsWith('series') || apiSubpath.startsWith('episodes') || apiSubpath.startsWith('search')) {
-      return Promise.resolve(new Response(JSON.stringify({
-        series: [],
-        episodes: [],
-        results: [],
-        hasNext: false,
-        page: 1,
-        status: true,
-        isSuccess: true
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json; charset=utf-8' }
-      }));
-    }
-
-    if (apiSubpath.startsWith('series/detail') || apiSubpath.startsWith('episode/detail')) {
-      return Promise.resolve(new Response(JSON.stringify({
-        status: false,
-        error: 'يتطلب قرمزي خادم اتصال (Backend URL)',
-        isSuccess: false
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json; charset=utf-8' }
-      }));
+      });
     }
 
     return originalFetch.call(this, resource, init);
   };
-
-  function showWebToast(msg) {
-    const t = document.getElementById('appToast');
-    if (t) {
-      t.textContent = msg;
-      t.classList.remove('hidden');
-      clearTimeout(window._toastTimer);
-      window._toastTimer = setTimeout(() => t.classList.add('hidden'), 4500);
-    }
-  }
 
   function initWebGatewaySettings() {
     const serverRow = document.getElementById('webServerSettingsRow');
@@ -294,9 +298,7 @@
         });
       }).observe(nativePlayer, { childList: true });
     }
-    if (serverUrlInput) {
-      serverUrlInput.value = localStorage.getItem('zoet_backend_url') || '';
-    }
+    serverUrlInput.value = savedBackend;
 
     const setStatus = (msg, kind) => {
       if (!serverStatusMsg) return;
@@ -306,74 +308,56 @@
       if (kind === 'err') serverStatusMsg.classList.add('is-err');
     };
 
-    if (saveServerBtn && serverUrlInput) {
-      saveServerBtn.addEventListener('click', () => {
-        const val = serverUrlInput.value.trim().replace(/\/+$/, '');
-        if (val) {
-          localStorage.setItem('zoet_backend_url', val);
-        } else {
-          localStorage.removeItem('zoet_backend_url');
+    async function connect(address, button, report, save) {
+      button.disabled = true;
+      report('جاري فحص الاتصال بالخادم…');
+      try {
+        await probeBackend(address, 30000);
+        report('الخادم متصل.', 'ok');
+        if (save) {
+          localStorage.setItem('zoet_backend_url', address);
+          sessionStorage.setItem('zoet_verified_backend', address);
+          window.location.reload();
         }
-        setStatus('تم حفظ إعدادات الخادم بنجاح، جاري التحديث...', 'ok');
-        setTimeout(() => window.location.reload(), 600);
-      });
+      } catch {
+        report(isLoopback(address) ? localConnectionHelp : 'تعذّر الاتصال بخادم ZOET. تحقّق من الرابط.', 'err');
+      } finally {
+        button.disabled = false;
+      }
     }
 
-    if (testServerBtn && serverUrlInput) {
-      testServerBtn.addEventListener('click', async () => {
-        const val = serverUrlInput.value.trim().replace(/\/+$/, '');
-        if (!val) {
-          setStatus('يرجى إدخال رابط الخادم أولاً.', 'err');
-          return;
-        }
-        setStatus('جاري فحص الاتصال بالخادم...', '');
-        try {
-          const resp = await originalFetch.call(window, val + '/api/health');
-          if (resp.ok) {
-            setStatus('الخادم متصل ويعمل بنجاح.', 'ok');
-          } else {
-            setStatus('استجاب الخادم برمز خطأ (' + resp.status + ').', 'err');
-          }
-        } catch (e) {
-          setStatus('تعذّر الاتصال بالخادم. تحقق من الرابط وإعدادات CORS.', 'err');
-        }
-      });
-    }
-
-    document.addEventListener('click', (e) => {
-      const krmziBtn = e.target.closest('[data-source="krmzi"], [data-pref-source="krmzi"]');
-      if (krmziBtn && !localStorage.getItem('zoet_backend_url')) {
-        showWebToast('لتشغيل قرمزي على الويب: فعّل خادم ZOET المحلي (127.0.0.1:3000) أو أدخل رابط Cloudflare Worker من الإعدادات.');
+    const readAddress = () => serverUrlInput.value.trim().replace(/\/+$/, '');
+    saveServerBtn.addEventListener('click', () => {
+      const address = readAddress();
+      if (address) {
+        connect(address, saveServerBtn, setStatus, true);
+      } else {
+        localStorage.removeItem('zoet_backend_url');
+        sessionStorage.removeItem('zoet_verified_backend');
+        window.location.reload();
       }
     });
+    testServerBtn.addEventListener('click', () => {
+      connect(readAddress() || localBackend, testServerBtn, setStatus, false);
+    });
 
-    autoDetectLocalBackend();
-  }
-
-  function autoDetectLocalBackend() {
-    if (localStorage.getItem('zoet_backend_url')) return;
-    try {
-      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const timeout = setTimeout(() => { if (controller) controller.abort(); }, 1200);
-      originalFetch.call(window, 'http://127.0.0.1:3000/api/health', {
-        method: 'GET',
-        signal: controller ? controller.signal : undefined
-      }).then(r => {
-        clearTimeout(timeout);
-        if (r && r.ok) {
-          localStorage.setItem('zoet_backend_url', 'http://127.0.0.1:3000');
-          showWebToast('تم الاتصال تلقائياً بخادم ZOET المحلي (127.0.0.1:3000)');
-          const serverUrlInput = document.getElementById('serverUrlInput');
-          if (serverUrlInput) serverUrlInput.value = 'http://127.0.0.1:3000';
-          const currentSource = localStorage.getItem('zoet_source') || localStorage.getItem('otium_source');
-          if (currentSource === 'krmzi') {
-            setTimeout(() => window.location.reload(), 300);
-          }
-        }
-      }).catch(() => {
-        clearTimeout(timeout);
-      });
-    } catch (_) {}
+    const notice = document.getElementById('krmziGatewayNotice');
+    const connectBtn = document.getElementById('connectLocalBackend');
+    const noticeStatus = document.getElementById('krmziGatewayStatus');
+    const krmziBtn = document.querySelector('[data-source="krmzi"]');
+    function updateNotice() {
+      notice.classList.toggle('hidden', Boolean(activeBackend) || krmziBtn.getAttribute('aria-pressed') !== 'true');
+    }
+    new MutationObserver(updateNotice).observe(krmziBtn, { attributes: true, attributeFilter: ['aria-pressed'] });
+    backendReady.then(updateNotice);
+    connectBtn.addEventListener('click', () => {
+      const address = isLoopback(savedBackend) ? savedBackend : localBackend;
+      connect(address, connectBtn, message => { noticeStatus.textContent = message; }, true);
+    });
+    document.getElementById('openGatewaySettings').addEventListener('click', () => {
+      document.getElementById('openSettingsBtn').click();
+      serverUrlInput.focus();
+    });
   }
 
   if (document.readyState === 'loading') {
