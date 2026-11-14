@@ -343,9 +343,33 @@
     document.addEventListener('click', (e) => {
       const krmziBtn = e.target.closest('[data-source="krmzi"], [data-pref-source="krmzi"]');
       if (krmziBtn && !localStorage.getItem('zoet_backend_url')) {
-        showWebToast('يتطلب مصدر قرمزي ضبط خادم اتصال من تبويب «الإعدادات». سينمانا متاح مباشرة بدون خادم.');
+        showWebToast('لتشغيل قرمزي على الويب: فعّل خادم ZOET المحلي (127.0.0.1:3000) أو أدخل رابط Cloudflare Worker من الإعدادات.');
       }
     });
+
+    autoDetectLocalBackend();
+  }
+
+  function autoDetectLocalBackend() {
+    if (localStorage.getItem('zoet_backend_url')) return;
+    try {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timeout = setTimeout(() => { if (controller) controller.abort(); }, 1200);
+      originalFetch.call(window, 'http://127.0.0.1:3000/api/health', {
+        method: 'GET',
+        signal: controller ? controller.signal : undefined
+      }).then(r => {
+        clearTimeout(timeout);
+        if (r && r.ok) {
+          localStorage.setItem('zoet_backend_url', 'http://127.0.0.1:3000');
+          showWebToast('تم الاتصال تلقائياً بخادم ZOET المحلي (127.0.0.1:3000)');
+          const serverUrlInput = document.getElementById('serverUrlInput');
+          if (serverUrlInput) serverUrlInput.value = 'http://127.0.0.1:3000';
+        }
+      }).catch(() => {
+        clearTimeout(timeout);
+      });
+    } catch (_) {}
   }
 
   if (document.readyState === 'loading') {
