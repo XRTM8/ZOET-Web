@@ -78,9 +78,6 @@ function __wbg_get_imports() {
             const ret = arg0.axes;
             return ret;
         },
-        __wbg_back_bf7b4166d30d7d87: function() { return handleError(function (arg0) {
-            arg0.back();
-        }, arguments); },
         __wbg_blur_c2856e0bcfec2cc0: function() { return handleError(function (arg0) {
             arg0.blur();
         }, arguments); },
@@ -215,6 +212,10 @@ function __wbg_get_imports() {
             const ret = arg0.fetch(arg1);
             return ret;
         },
+        __wbg_fetch_c30fc2ed77d76a76: function(arg0, arg1, arg2) {
+            const ret = arg0.fetch(getStringFromWasm0(arg1, arg2));
+            return ret;
+        },
         __wbg_files_2d8b9138ca028e2c: function(arg0) {
             const ret = arg0.files;
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
@@ -326,10 +327,6 @@ function __wbg_get_imports() {
             const ret = arg0.hidden;
             return ret;
         },
-        __wbg_history_7236bed7324e63c0: function() { return handleError(function (arg0) {
-            const ret = arg0.history;
-            return ret;
-        }, arguments); },
         __wbg_hostname_e42e6cb425d7924e: function() { return handleError(function (arg0, arg1) {
             const ret = arg1.hostname;
             const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -793,6 +790,9 @@ function __wbg_get_imports() {
             const ret = arg0.result;
             return ret;
         }, arguments); },
+        __wbg_revokeObjectURL_52940372bc4245cf: function() { return handleError(function (arg0, arg1) {
+            URL.revokeObjectURL(getStringFromWasm0(arg0, arg1));
+        }, arguments); },
         __wbg_scrollHeight_4e4f6d0987910b5b: function(arg0) {
             const ret = arg0.scrollHeight;
             return ret;
@@ -922,6 +922,13 @@ function __wbg_get_imports() {
         __wbg_signal_fac908876f45725d: function(arg0) {
             const ret = arg0.signal;
             return ret;
+        },
+        __wbg_src_9b84873af2849565: function(arg0, arg1) {
+            const ret = arg1.src;
+            const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32((arg0 >>> 0) + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32((arg0 >>> 0) + 4 * 0, ptr1, true);
         },
         __wbg_startTime_bebaa046d3982759: function(arg0) {
             const ret = arg0.startTime;
@@ -1073,7 +1080,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_generic_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 314, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 323, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_b1e90fbcb8af5bbf___convert__closures_____invoke___wasm_bindgen_b1e90fbcb8af5bbf___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_b1e90fbcb8af5bbf___JsError___true_);
             return ret;
         },
@@ -1093,7 +1100,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_generic_0000000000000006: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 312, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 321, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_b1e90fbcb8af5bbf___convert__closures_____invoke_______true_);
             return ret;
         },

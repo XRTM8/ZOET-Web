@@ -12,9 +12,8 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="preload" href="fonts/tajawal-5.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="fonts/tajawal.css">
-  <link rel="stylesheet" href="styles.css?v=3.0.0&amp;rev=4">
-  <meta name="zoet-api-origin" content="">
-  <script src="web-gateway.js?v=3.0.0&amp;rev=4"></script>
+  <link rel="stylesheet" href="styles.css?v=3.0.0">
+  <script src="web-gateway.js?v=3.0.0"></script>
 </head>
 <body>
 <div class="app-frame" id="appFrame">
@@ -41,6 +40,10 @@
           <svg class="z-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
           <span>الإعدادات</span>
         </button>
+        <button class="tv-nav-btn" id="tvFullscreenBtn" aria-label="ملء الشاشة" title="ملء الشاشة (F11)">
+          <svg class="z-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+          <span>ملء الشاشة</span>
+        </button>
       </nav>
       <div class="top-nav-end">
         <div class="desktop-search-container">
@@ -48,6 +51,9 @@
           <input type="search" id="desktopSearchInput" placeholder="ابحث عن فيلم أو مسلسل..." autocomplete="off" spellcheck="false" aria-label="بحث فوري">
           <kbd class="desktop-search-shortcut" dir="ltr">Ctrl+K</kbd>
         </div>
+        <button class="win-btn fullscreen-toggle-btn" id="fullscreenToggleBtn" title="ملء الشاشة (F11)" aria-label="ملء الشاشة">
+          <svg class="z-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+        </button>
         <div class="desktop-window-controls hidden" id="desktopWindowControls" aria-label="التحكم بالنافذة">
           <button class="win-btn" id="winMinimizeBtn" title="تصغير" aria-label="تصغير">
             <svg class="z-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 12h12"/></svg>
@@ -64,7 +70,7 @@
   </header>
 
   <main class="content-canvas" id="contentCanvas">
-    <section class="source-switcher" id="sourceSwitcher" aria-label="المصادر">
+    <section class="source-switcher hidden" id="sourceSwitcher" aria-label="المصادر">
       <span class="source-label">المصادر</span>
       <div class="source-options">
         <button class="source-option active" data-source="all" aria-pressed="true">الكل</button>
@@ -81,11 +87,6 @@
         <span id="seriesCountSub" class="headline-muted"></span>
       </div>
       <div id="continueStrip" class="continue-strip hidden"></div>
-      <section class="offline-card hidden" id="krmziWebUnavailable" aria-labelledby="krmziWebTitle">
-        <h3 id="krmziWebTitle">قرمزي غير متاح حالياً داخل ZOET Web</h3>
-        <p>تقدر تشاهد من سينمانا حسب توفّره على شبكتك.</p>
-        <button type="button" class="btn-retry" id="tryCinemanaBtn">عرض سينمانا</button>
-      </section>
       <div class="media-grid" id="seriesGrid"></div>
       <div class="catalogue-pagination">
         <p id="cataloguePageStatus" role="status"></p>
@@ -150,7 +151,7 @@
           </div>
         </div>
 
-        <div class="settings-section-label">المصادر وبوابة الاتصال</div>
+        <div class="settings-section-label">مزود المحتوى</div>
         <div class="settings-group">
           <div class="settings-row">
             <div class="settings-row-info">
@@ -158,17 +159,14 @@
                 <svg class="z-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="6.5" rx="2"/><rect x="3.5" y="13.5" width="17" height="6.5" rx="2"/><circle cx="7.5" cy="7.25" r="0.9" fill="currentColor" stroke="none"/><circle cx="7.5" cy="16.75" r="0.9" fill="currentColor" stroke="none"/></svg>
               </span>
               <div>
-                <h3>المصدر الافتراضي</h3>
-                <p>تحديد مزود المحتوى في القائمة والبحث.</p>
+                <h3>شبكتي سينمانا</h3>
+                <p>بث مباشر رسمي عالي الدقة (MP4/HLS) بدون إعلانات وبمشغل أصلي 100%.</p>
               </div>
             </div>
             <div class="source-options settings-source-pills">
-              <button class="source-option" data-pref-source="all" aria-pressed="false">الكل</button>
-              <button class="source-option" data-pref-source="krmzi" aria-pressed="false">قرمزي</button>
-              <button class="source-option" data-pref-source="cinemana" aria-pressed="false">سينمانا</button>
+              <button class="source-option active" data-pref-source="cinemana" aria-pressed="true">مفعّل</button>
             </div>
           </div>
-
         </div>
 
         <div class="settings-section-label">البيانات والنسخ الاحتياطي</div>
@@ -321,7 +319,7 @@
     <div class="video-stage" id="playerCanvas" tabindex="-1">
       <div class="player-backdrop" id="playerBackdrop" aria-hidden="true"></div>
       <video id="nativePlayer" playsinline webkit-playsinline preload="none" referrerpolicy="no-referrer" class="video-elem hidden"></video>
-      <iframe id="embedPlayer" class="video-elem hidden" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-presentation" referrerpolicy="no-referrer"></iframe>
+      <iframe id="embedPlayer" class="video-elem hidden" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="no-referrer"></iframe>
 
       <button class="touch-unlock-pill hidden" id="unlockTouchBtn" aria-label="إلغاء قفل اللمس">
         <svg class="z-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="10" rx="2.2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
@@ -439,6 +437,7 @@
       </div>
     </div>
     <input type="file" id="subFileInput" accept=".srt,.vtt,text/vtt" class="hidden">
+    <input type="file" id="backupFileInput" accept=".json,application/json" class="hidden">
 
     <div class="player-sub-drawer">
       <div class="drawer-topline">
